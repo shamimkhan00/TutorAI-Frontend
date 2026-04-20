@@ -1,0 +1,504 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Design Tokens ──────────────────────────────────────────────────── */
+:root {
+  --bg:          #0d0e14;
+  --bg-2:        #12131a;
+  --bg-3:        #1a1b25;
+  --bg-4:        #22232f;
+  --surface:     #1e1f2b;
+  --surface-2:   #252636;
+
+  --border:      rgba(255,255,255,0.07);
+  --border-2:    rgba(255,255,255,0.13);
+
+  --text:        #f0ede6;
+  --text-2:      #a09eaa;
+  --text-3:      #62606e;
+
+  --accent:      #e8ff47;
+  --accent-dim:  rgba(232,255,71,0.10);
+  --accent-glow: rgba(232,255,71,0.22);
+
+  --danger:      #ff5e5e;
+  --success:     #4fffb0;
+
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-body:    "Geist", system-ui, sans-serif;
+  --font-mono:    "Geist Mono", monospace;
+
+  --radius-sm:   8px;
+  --radius:      12px;
+  --radius-lg:   18px;
+  --radius-xl:   26px;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ─── Selection ──────────────────────────────────────────────────────── */
+::selection { background: rgba(232,255,71,0.18); color: var(--accent); }
+
+/* ─── Focus ──────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Typography ─────────────────────────────────────────────────────── */
+.font-display { font-family: var(--font-display); }
+.font-mono    { font-family: var(--font-mono); }
+
+/* ─── Grid texture (auth pages) ──────────────────────────────────────── */
+.grid-texture {
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* ─── Glow blobs ─────────────────────────────────────────────────────── */
+.glow-blob {
+  position: fixed;
+  width: 700px;
+  height: 700px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232,255,71,0.055) 0%, transparent 68%);
+  pointer-events: none;
+  top: -250px;
+  right: -180px;
+  z-index: 0;
+}
+.glow-blob-2 {
+  position: fixed;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(100,80,255,0.04) 0%, transparent 68%);
+  pointer-events: none;
+  bottom: -150px;
+  left: -100px;
+  z-index: 0;
+}
+
+/* ─── Input ──────────────────────────────────────────────────────────── */
+.input {
+  width: 100%;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  line-height: 1.5;
+}
+.input::placeholder { color: var(--text-3); }
+.input:focus {
+  border-color: rgba(232,255,71,0.45);
+  box-shadow: 0 0 0 3px rgba(232,255,71,0.07);
+}
+.input.error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255,94,94,0.07);
+}
+
+/* ─── OTP input ──────────────────────────────────────────────────────── */
+.otp-input {
+  width: 54px;
+  height: 62px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 500;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+  outline: none;
+}
+.otp-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  transform: translateY(-2px);
+}
+.otp-input.filled {
+  border-color: rgba(232,255,71,0.35);
+  background: var(--bg-4);
+}
+
+/* ─── Button ─────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+  white-space: nowrap;
+  user-select: none;
+  letter-spacing: -0.01em;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #0d0e14;
+  padding: 13px 22px;
+  width: 100%;
+}
+.btn-primary:hover  { background: #f2ff60; box-shadow: 0 0 28px var(--accent-glow); }
+.btn-primary:active { transform: scale(0.985); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+}
+.btn-ghost:hover { background: var(--bg-3); color: var(--text); }
+
+.btn-outline {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  padding: 11px 18px;
+}
+.btn-outline:hover { background: var(--bg-3); }
+
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.btn-icon:hover { background: var(--bg-4); color: var(--text); }
+
+/* ─── Auth card ──────────────────────────────────────────────────────── */
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 48px 44px;
+  width: 100%;
+  max-width: 460px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── Label ──────────────────────────────────────────────────────────── */
+.label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-2);
+  margin-bottom: 8px;
+  letter-spacing: 0.03em;
+}
+
+/* ─── Divider ────────────────────────────────────────────────────────── */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+}
+.divider::before, .divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ─── Card ───────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* ─── Status badge ───────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 99px;
+  letter-spacing: 0.02em;
+}
+.badge-ready    { background: rgba(79,255,176,0.1);  color: var(--success); }
+.badge-process  { background: rgba(232,255,71,0.1);  color: var(--accent); }
+.badge-upload   { background: rgba(255,255,255,0.05);color: var(--text-3); }
+.badge-error    { background: rgba(255,94,94,0.1);   color: var(--danger); }
+
+/* ─── Chat bubbles ───────────────────────────────────────────────────── */
+.bubble-user {
+  background: var(--accent);
+  color: #0d0e14;
+  border-radius: 20px 20px 5px 20px;
+  padding: 12px 18px;
+  max-width: 72%;
+  line-height: 1.6;
+  font-size: 0.9375rem;
+}
+.bubble-ai {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 20px 20px 20px 5px;
+  padding: 14px 18px;
+  max-width: 82%;
+  line-height: 1.7;
+  font-size: 0.9375rem;
+}
+
+/* ─── Typing dots ────────────────────────────────────────────────────── */
+.typing-dots { display: flex; align-items: center; gap: 5px; padding: 4px 2px; }
+.typing-dots span {
+  width: 7px; height: 7px;
+  background: var(--text-3);
+  border-radius: 50%;
+  display: inline-block;
+  animation: typingBounce 1.4s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typingBounce {
+  0%,60%,100% { transform: translateY(0);    opacity: 0.35; }
+  30%          { transform: translateY(-7px); opacity: 1; }
+}
+
+/* ─── Drop zone ──────────────────────────────────────────────────────── */
+.dropzone {
+  border: 1.5px dashed var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 36px 28px;
+  text-align: center;
+  transition: border-color 0.2s, background 0.2s;
+  cursor: pointer;
+}
+.dropzone:hover, .dropzone.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ─── Progress bar ───────────────────────────────────────────────────── */
+.progress-track {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-4);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+/* ─── Sidebar doc item ───────────────────────────────────────────────── */
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.12s;
+  position: relative;
+}
+.doc-item:hover  { background: var(--bg-3); }
+.doc-item.active { background: var(--bg-4); }
+
+/* ─── Toggle ─────────────────────────────────────────────────────────── */
+.toggle-track {
+  width: 38px; height: 22px;
+  background: var(--bg-4);
+  border-radius: 99px;
+  border: 1px solid var(--border-2);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.toggle-track.on { background: var(--accent); border-color: var(--accent); }
+.toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 14px; height: 14px;
+  background: var(--text-3);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle-track.on .toggle-thumb { transform: translateX(16px); background: #0d0e14; }
+
+/* ─── Tab bar ────────────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-3);
+  border-radius: var(--radius);
+  padding: 3px;
+}
+.tab-item {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: center;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text-3);
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.tab-item.active {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity:0; transform: translateY(14px); }
+  to   { opacity:1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity:0; } to { opacity:1; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+.animate-fade-up { animation: fadeUp 0.32s ease-out both; }
+.animate-fade-in { animation: fadeIn 0.22s ease-out both; }
+
+.spinner {
+  width: 17px; height: 17px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* ─── AI prose (markdown inside chat) ───────────────────────────────── */
+.ai-prose { line-height: 1.72; font-size: 0.9375rem; }
+.ai-prose h1,.ai-prose h2,.ai-prose h3 {
+  font-family: var(--font-display);
+  color: var(--text);
+  margin: 16px 0 6px;
+  line-height: 1.3;
+}
+.ai-prose h1 { font-size: 1.15rem; }
+.ai-prose h2 { font-size: 1.05rem; }
+.ai-prose h3 { font-size: 0.975rem; }
+.ai-prose p  { margin-bottom: 10px; }
+.ai-prose ul,.ai-prose ol { padding-left: 20px; margin-bottom: 10px; }
+.ai-prose li { margin-bottom: 4px; }
+.ai-prose strong { color: var(--text); font-weight: 600; }
+.ai-prose em { color: var(--text-2); font-style: italic; }
+.ai-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: var(--bg-3);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--accent);
+}
+.ai-prose pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.825rem;
+  margin: 10px 0;
+  line-height: 1.6;
+}
+.ai-prose blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 14px;
+  color: var(--text-2);
+  font-style: italic;
+  margin: 10px 0;
+}
+
+/* ─── Citation chip ──────────────────────────────────────────────────── */
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+  padding: 3px 10px;
+  border-radius: 99px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.citation-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ─── Noise overlay ──────────────────────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.35;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .auth-card { padding: 32px 26px; border-radius: var(--radius-lg); }
+  .otp-input { width: 44px; height: 54px; font-size: 1.2rem; }
+}
