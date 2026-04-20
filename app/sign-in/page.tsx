@@ -233,18 +233,28 @@ export function LogoMark({ size = 38 }: { size?: number }) {
     <div style={{ display: "inline-flex", alignItems: "center", gap: 11 }}>
       <div style={{
         width: size, height: size,
-        background: "var(--accent)",
-        borderRadius: Math.round(size * 0.27) + "px",
+        background: "var(--accent)", // Background color can remain, or you can remove it
+        borderRadius: Math.round(size * 0.25) + "px",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: size * 0.44 + "px",
         fontFamily: "var(--font-display)",
         color: "#0d0e14",
-        fontWeight: 700,
+        fontWeight: 500,
         flexShrink: 0,
         letterSpacing: "-0.02em",
-      }}>T</div>
+      }}>
+        <img
+          src="/favicon.webp" // Path to your image in the public folder
+          alt="Custom Icon"
+          style={{
+            width: size * 0.8, // Adjust the size of the image
+            height: size * 0.8, // Match the size
+            borderRadius: "50%", // Make the image round (if it's not square, this will clip it)
+          }}
+        />
+      </div>
       <span style={{
-        fontFamily: "var(--font-display)",
+        fontFamily: "'Poppins'",
         fontSize: size * 0.66 + "px",
         letterSpacing: "-0.025em",
         color: "var(--text)",

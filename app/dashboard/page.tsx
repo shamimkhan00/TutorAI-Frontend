@@ -742,13 +742,24 @@ const var_radius = "var(--radius)";
 function AiAvatar() {
   return (
     <div style={{
-      width:32, height:32, flexShrink:0,
-      background:"var(--accent)",
-      borderRadius:9,
-      display:"flex", alignItems:"center", justifyContent:"center",
-      fontFamily:"var(--font-display)", fontSize:"0.85rem",
-      color:"#0d0e14", fontWeight:700,
-    }}>T</div>
+      width: 32, height: 32, flexShrink: 0,
+      background: "var(--accent)",
+      borderRadius: 9,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "var(--font-display)", fontSize: "0.85rem",
+      color: "#0d0e14", fontWeight: 700,
+    }}>
+      {/* Use an image instead of the "T" */}
+      <img
+        src="/favicon.webp"  // Replace with the path to your image
+        alt="Custom Icon"
+        style={{
+          width: "80%",   // Adjust size of the image within the circle
+          height: "80%",  // Adjust size of the image within the circle
+          borderRadius: "50%", // Make the image circular
+        }}
+      />
+    </div>
   );
 }
 
