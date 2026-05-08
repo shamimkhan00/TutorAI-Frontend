@@ -20,7 +20,7 @@ export default function HomePage() {
     <main
       className="grid-texture"
       style={{
-        minHeight: "100dvh",
+        minHeight: "auto",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -43,15 +43,17 @@ export default function HomePage() {
         <h1
           className="font-display"
           style={{
+            fontFamily: "'Poppins', sans-serif",
             fontSize: "clamp(2.4rem, 5.5vw, 3.6rem)",
             lineHeight: 1.08,
             letterSpacing: "-0.03em",
-            marginBottom: 20,
+            marginBottom: 10,
             color: "var(--text)",
+            textAlign:"center",
           }}
         >
           Learn anything,<br />
-          <span style={{ color: "var(--accent)" }}>actually understand it.</span>
+          <span style={{ color: "var(--accent)", whiteSpace: "nowrap"}}>actually understand it.</span>
         </h1>
 
         <p style={{
@@ -132,5 +134,4 @@ const FEATURES = [
   { icon: "📄", title: "Upload documents",  desc: "PDF, images, or plain text — TutorAI reads it all." },
   { icon: "💬", title: "Ask anything",       desc: "Get answers that come directly from your material." },
   { icon: "✦",  title: "Auto summaries",     desc: "Key points extracted and explained simply." },
-  { icon: "🎓", title: "Real tutoring",       desc: "AI explains concepts, not just quotes text." },
 ];
