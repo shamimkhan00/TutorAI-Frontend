@@ -9,7 +9,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { LogoMark } from "./sign-in/page";
+import { LogoMark } from "./components/logo-mark";
 import { SignedIn }  from "./components/signed-in";
 import { SignedOut } from "./components/signed-out";
 

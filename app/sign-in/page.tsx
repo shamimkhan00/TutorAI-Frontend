@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword, type AuthError } from "firebase/auth";
 
+import { LogoMark } from "@/app/components/logo-mark";
 import { useAuthUser } from "@/app/hooks/use-auth-user";
 import { auth } from "@/lib/firebase";
 
@@ -228,28 +229,3 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-export function LogoMark({ size = 38 }: { size?: number }) {
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 11 }}>
-      <div style={{
-        width: size, height: size,
-        background: "var(--accent)",
-        borderRadius: Math.round(size * 0.27) + "px",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: size * 0.44 + "px",
-        fontFamily: "var(--font-display)",
-        color: "#0d0e14",
-        fontWeight: 700,
-        flexShrink: 0,
-        letterSpacing: "-0.02em",
-      }}>T</div>
-      <span style={{
-        fontFamily: "var(--font-display)",
-        fontSize: size * 0.66 + "px",
-        letterSpacing: "-0.025em",
-        color: "var(--text)",
-        lineHeight: 1,
-      }}>TutorAI</span>
-    </div>
-  );
-}

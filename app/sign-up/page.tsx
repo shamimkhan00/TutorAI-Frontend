@@ -5,7 +5,7 @@ import Link from "next/link";
 import { signInWithCustomToken } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
-import { LogoMark } from "../sign-in/page";
+import { LogoMark } from "@/app/components/logo-mark";
 
 type Step = "form" | "otp";
 
@@ -267,7 +267,7 @@ function ResendTimer({ onResend }: { onResend: () => void }) {
         <>Resend code in <span style={{ color:"var(--text-2)", fontFamily:"var(--font-mono)" }}>{sec}s</span></>
       ) : (
         <>
-          Didn't receive it?{" "}
+          Didn&apos;t receive it?{" "}
           <button onClick={handleResend} disabled={sending}
             style={{ background:"none", border:"none", color:"var(--accent)",
               cursor:"pointer", fontFamily:"var(--font-body)", fontSize:"0.875rem" }}>

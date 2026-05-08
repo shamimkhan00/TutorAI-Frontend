@@ -5,7 +5,7 @@ import Link from "next/link";
 import { signInWithCustomToken } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
-import { LogoMark } from "../sign-in/page";
+import { LogoMark } from "@/app/components/logo-mark";
 
 type Step = "email" | "otp" | "done";
 
@@ -106,7 +106,7 @@ export default function ForgotPasswordPage() {
                 Reset password
               </h1>
               <p style={{ color:"var(--text-2)", fontSize:"0.9375rem", marginBottom:34, lineHeight:1.5 }}>
-                Enter your email and we'll send a verification code.
+                Enter your email and we&apos;ll send a verification code.
               </p>
               <form onSubmit={handleSendOtp}>
                 <div style={{ marginBottom:24 }}>
@@ -192,7 +192,7 @@ export default function ForgotPasswordPage() {
                 Password updated
               </h1>
               <p style={{ color:"var(--text-2)", fontSize:"0.9375rem", marginBottom:32, lineHeight:1.6 }}>
-                Your password has been changed and you're now signed in.
+                Your password has been changed and you&apos;re now signed in.
               </p>
               <button className="btn btn-primary" onClick={() => router.replace("/dashboard")}
                 style={{ fontSize:"0.9375rem", padding:"14px 22px" }}>
