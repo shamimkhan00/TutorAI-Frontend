@@ -23,6 +23,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
+import { uploadPdfToBackend } from "@/lib/api";
 import { auth } from "@/lib/firebase";
 import { useAuthUser } from "@/app/hooks/use-auth-user";
 import { LogoMark } from "@/app/components/logo-mark";
@@ -48,6 +49,7 @@ export default function DashboardClient() {
   /* ── State ──────────────────────────────────────────────────────── */
   const [docs,        setDocs]        = useState<Doc[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [uploadedDocumentId, setUploadedDocumentId] = useState<string | null>(null);
   const [msgs,        setMsgs]        = useState<Msg[]>(INITIAL_MESSAGES);
   const [input,       setInput]       = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -86,15 +88,39 @@ export default function DashboardClient() {
 
   /* ── File upload ─────────────────────────────────────────────────── */
   const handleFiles = useCallback(async (files: FileList | File[]) => {
-    const arr = Array.from(files).filter(f =>
-      f.type === "application/pdf" ||
-      f.type.startsWith("image/") ||
-      f.type.startsWith("text/")
-    );
-    if (!arr.length) return;
+    const arr = Array.from(files);
 
-    for (const file of arr) {
-      const id = createId();
+    if (!arr.length) {
+      setMsgs(prev => [...prev, {
+        id: createId(),
+        role: "assistant",
+        content: "Please select a PDF file before uploading.",
+      }]);
+      return;
+    }
+
+    if (!auth.currentUser) {
+      setMsgs(prev => [...prev, {
+        id: createId(),
+        role: "assistant",
+        content: "Please sign in before uploading a PDF.",
+      }]);
+      return;
+    }
+    const currentUser = auth.currentUser;
+
+    const pdfs = arr.filter(file => file.type === "application/pdf");
+    if (!pdfs.length) {
+      setMsgs(prev => [...prev, {
+        id: createId(),
+        role: "assistant",
+        content: "Only PDF files are supported right now. Please choose a PDF and try again.",
+      }]);
+      return;
+    }
+
+    for (const file of pdfs) {
+      const id = crypto.randomUUID();
       const newDoc: Doc = {
         id, name: file.name, type: getDocType(file),
         size: file.size, status: "uploading", progress: 0,
@@ -104,6 +130,34 @@ export default function DashboardClient() {
       setRightTab("summary");
 
       try {
+        const token = await currentUser.getIdToken();
+        setDocs(prev => prev.map(d => d.id === id ? { ...d, progress: 35 } : d));
+        const data = await uploadPdfToBackend(file, token, id);
+        setDocs(prev => prev.map(d => d.id === id ? { ...d, status: "processing", progress: 90 } : d));
+        setUploadedDocumentId(data.documentId);
+
+        setDocs(prev => prev.map(d => d.id === id ? {
+          ...d,
+          id: data.documentId,
+          status: "ready",
+          progress: 100,
+          summary: `PDF uploaded successfully. Processed ${data.chunkCount} chunks. You can now ask questions once the chat API is connected.`,
+          keyPoints: [
+            `Document ID: ${data.documentId}`,
+            `Processed chunks: ${data.chunkCount}`,
+            "Chat responses will be available once the chat API is connected",
+          ],
+          qaList: [
+            { q: "Can I ask questions about this PDF?", a: "The PDF has been processed. The frontend is saving the document ID for the future chat API." },
+          ],
+        } : d));
+        setActiveDocId(data.documentId);
+
+        setMsgs(prev => [...prev, {
+          id: createId(), role: "assistant",
+          content: `PDF uploaded successfully. Processed ${data.chunkCount} chunks. You can now ask questions once the chat API is connected.\n\nDocument ID: \`${data.documentId}\``,
+        }]);
+        continue;
         /* ── BACKEND: replace mock with real upload ──────────────────
            const formData = new FormData();
            formData.append("file", file);
@@ -152,8 +206,13 @@ export default function DashboardClient() {
           content: `I've processed **${file.name}**. I've read through the entire document and I'm ready to help you understand it.\n\nYou can:\n- Ask me to explain any concept from it\n- Request a summary\n- Ask me to quiz you\n- Ask specific questions about the content`,
         }]);
 
-      } catch {
+      } catch (error) {
         setDocs(prev => prev.map(d => d.id === id ? { ...d, status: "error" } : d));
+        setMsgs(prev => [...prev, {
+          id: createId(),
+          role: "assistant",
+          content: error instanceof Error ? error.message : "Upload failed",
+        }]);
       }
     }
   }, []);
@@ -183,6 +242,18 @@ export default function DashboardClient() {
     setMsgs(prev => [...prev, { id: aiId, role: "assistant", content: "", streaming: true }]);
 
     try {
+      // TODO: call the chat API here once the backend exposes one, passing uploadedDocumentId.
+      setMsgs(prev => prev.map(m => m.id === aiId
+        ? {
+            ...m,
+            content: uploadedDocumentId
+              ? `Chat is not connected yet. Your PDF is ready with document ID \`${uploadedDocumentId}\`, so this question can be sent once the chat API is available.`
+              : "Please upload a PDF first. Once the chat API is connected, questions will use the saved document ID.",
+            streaming: false,
+          }
+        : m
+      ));
+      return;
       /* ── BACKEND: replace mock stream with real API call ─────────────
          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
            method: "POST",
@@ -227,7 +298,7 @@ export default function DashboardClient() {
     } finally {
       setChatLoading(false);
     }
-  }, [input, chatLoading, readyDocs]);
+  }, [input, chatLoading, readyDocs, uploadedDocumentId]);
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -274,7 +345,7 @@ export default function DashboardClient() {
             <p className="font-display" style={{ fontSize:"1.6rem", color:"var(--accent)", marginBottom:8 }}>
               Drop to upload
             </p>
-            <p style={{ color:"var(--text-3)", fontSize:"0.9375rem" }}>PDF, images, or text files</p>
+            <p style={{ color:"var(--text-3)", fontSize:"0.9375rem" }}>PDF files only</p>
           </div>
         </div>
       )}
@@ -309,7 +380,7 @@ export default function DashboardClient() {
           <div style={{ padding:"14px 14px 8px" }}>
             <input
               ref={fileInputRef} type="file" multiple
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md"
+              accept=".pdf,application/pdf"
               style={{ display:"none" }}
               onChange={e => e.target.files && handleFiles(e.target.files)}
             />
@@ -335,7 +406,7 @@ export default function DashboardClient() {
               }}>
                 <div style={{ fontSize:"2rem", marginBottom:10, opacity:0.3 }}>📂</div>
                 No documents yet.<br />
-                Upload a PDF or image<br />to start learning.
+                Upload a PDF<br />to start learning.
               </div>
             ) : (
               <>
@@ -516,7 +587,7 @@ export default function DashboardClient() {
           }}>
             {/* File attach */}
             <input
-              type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md"
+              type="file" multiple accept=".pdf,application/pdf"
               style={{ display:"none" }} id="chat-file"
               onChange={e => e.target.files && handleFiles(e.target.files)}
             />
@@ -654,7 +725,7 @@ export default function DashboardClient() {
                 <span style={{ color:"var(--accent)", fontWeight:500 }}>Click</span> or drag & drop a file
               </p>
               <p style={{ fontSize:"0.75rem", color:"var(--text-3)", marginTop:4 }}>
-                PDF · Images · Text files
+                PDF files only
               </p>
             </div>
           </div>

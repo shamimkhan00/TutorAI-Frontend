@@ -1,34 +1,54 @@
 // lib/api.ts
-import { auth } from "@/lib/firebase"; // your existing export
+import { auth } from "@/lib/firebase";
 
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL; // e.g. http://localhost:5000
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:2000";
 
-async function getAuthHeaders(): Promise<HeadersInit> {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
-  const token = await user.getIdToken();
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+export interface UploadPdfResponse {
+  success: true;
+  documentId: string;
+  chunkCount: number;
 }
 
-export async function uploadPDF(file: File, documentId?: string) {
-  const headers = await getAuthHeaders();
+async function getAuthToken(): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Please sign in before uploading a PDF.");
+  }
 
+  return user.getIdToken();
+}
+
+export async function uploadPdfToBackend(
+  file: File,
+  token: string,
+  documentId: string
+): Promise<UploadPdfResponse> {
   const formData = new FormData();
   formData.append("pdf", file);
-  if (documentId) formData.append("documentId", documentId);
+  formData.append("documentId", documentId);
 
-  const res = await fetch(`${BASE_URL}/upload`, {
+  const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
-    headers, // Authorization header only — don't set Content-Type with FormData
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
     body: formData,
   });
 
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Upload failed");
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Upload failed");
   }
 
-  return res.json(); // { success, documentId, chunkCount }
+  return data;
+}
+
+export async function uploadPDF(
+  file: File,
+  documentId = crypto.randomUUID()
+): Promise<UploadPdfResponse> {
+  const token = await getAuthToken();
+  return uploadPdfToBackend(file, token, documentId);
 }
