@@ -18,6 +18,17 @@ export function useAuthUser(): AuthUserState {
     const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setLoading(false);
+
+      if (nextUser) {
+        nextUser
+          .getIdToken()
+          .then((token) => {
+            console.log("Firebase ID token for Postman:", token);
+          })
+          .catch((error) => {
+            console.error("Failed to get Firebase ID token:", error);
+          });
+      }
     });
 
     return unsubscribe;
