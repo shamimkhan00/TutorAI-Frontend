@@ -4,7 +4,7 @@
 // Displays the AI-generated course outline for a document.
 // Lets the user start the tutor from the beginning or from a specific topic.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { Doc, Topic } from "../_types/dashboard";
 import { EmptyState } from "./empty-state";
 
@@ -28,6 +28,18 @@ interface TopicsPanelProps {
 
 export function TopicsPanel({ doc, onStartTutor }: TopicsPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const topicRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  function toggleTopic(id: string) {
+    const opening = expandedId !== id;
+    setExpandedId(opening ? id : null);
+    if (opening) {
+      // Give React one frame to expand the card, then scroll it into view
+      requestAnimationFrame(() => {
+        topicRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  }
 
   // ── Loading state ─────────────────────────────────────────────────
   if (doc.topicsLoading) {
@@ -123,17 +135,19 @@ export function TopicsPanel({ doc, onStartTutor }: TopicsPanelProps) {
           return (
             <div
               key={topic.id}
+              ref={el => { topicRefs.current[topic.id] = el; }}
               style={{
                 background: "var(--bg-3)",
                 border: `1px solid ${expanded ? "var(--accent)" : "var(--border)"}`,
                 borderRadius: "var(--radius)",
                 overflow: "hidden",
-                transition: "border-color 0.15s",
+                transition: "border-color 0.15s, box-shadow 0.15s",
+                boxShadow: expanded ? "0 0 0 3px rgba(232,255,71,0.08), 0 4px 24px rgba(0,0,0,0.25)" : "none",
               }}
             >
               {/* Topic header row */}
               <button
-                onClick={() => setExpandedId(expanded ? null : topic.id)}
+                onClick={() => toggleTopic(topic.id)}
                 style={{
                   width: "100%", background: "none", border: "none",
                   cursor: "pointer", padding: "12px 14px",

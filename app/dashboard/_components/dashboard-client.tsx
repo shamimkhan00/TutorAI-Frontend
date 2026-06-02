@@ -3,12 +3,12 @@
 /**
  * app/dashboard/_components/dashboard-client.tsx
  *
- * Changes from previous version:
- *  - streamExplanation() helper added — reads SSE from /api/tutor/explain
- *  - handleStartTutor() now calls the real backend instead of the mock placeholder
- *  - streamAbort ref added so the user can cancel mid-stream
- *  - "◼ Stop" button shown in header while streaming
- *  - Everything else (layout, upload, topics fetch, tabs) is identical to your current file
+ * New in this version:
+ *  - loadDocuments() on mount: fetches existing docs from MongoDB and
+ *    restores them into state so they survive page refresh
+ *  - Chat history persisted to localStorage keyed by userId
+ *  - Delete button calls DELETE /api/documents/:id which removes the
+ *    document + all its chunks from the database
  */
 
 import {
@@ -21,7 +21,13 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
-import { backendUrl, uploadPdfToBackend } from "@/lib/api";
+import {
+  backendUrl,
+  uploadPdfToBackend,
+  fetchUserDocuments,
+  deleteDocumentFromBackend,
+  type BackendDocument,
+} from "@/lib/api";
 import { auth } from "@/lib/firebase";
 import { useAuthUser } from "@/app/hooks/use-auth-user";
 import { LogoMark } from "@/app/components/logo-mark";
@@ -32,11 +38,149 @@ import { TopicsPanel } from "./topics-panel";
 import { ProcessingState } from "./processing-state";
 import { SidebarDocItem } from "./sidebar-doc-item";
 import { StatusBadge } from "./status-badge";
-import { createId, getDocIcon, getDocType, sleep } from "../_lib/dashboard-utils";
+import { createId, getDocIcon, getDocType } from "../_lib/dashboard-utils";
 import { INITIAL_MESSAGES } from "../_lib/mock-data";
 import type { Doc, Msg, RightTab, Topic } from "../_types/dashboard";
 
-// ─── API helpers ──────────────────────────────────────────────────────────────
+// ─── localStorage helpers ─────────────────────────────────────────────────────
+
+function chatKey(userId: string) { return `tutor_chat_${userId}`; }
+
+function saveChat(userId: string, msgs: Msg[]) {
+  try {
+    // Only persist the last 60 messages, never streaming ones
+    const toSave = msgs.filter(m => !m.streaming).slice(-60);
+    localStorage.setItem(chatKey(userId), JSON.stringify(toSave));
+  } catch { /* storage full / SSR — ignore */ }
+}
+
+function loadChat(userId: string): Msg[] {
+  try {
+    const raw = localStorage.getItem(chatKey(userId));
+    if (!raw) return INITIAL_MESSAGES;
+    const parsed = JSON.parse(raw) as Msg[];
+    return parsed.length > 0 ? parsed : INITIAL_MESSAGES;
+  } catch {
+    return INITIAL_MESSAGES;
+  }
+}
+
+// ─── Convert a BackendDocument → Doc (frontend shape) ────────────────────────
+
+function backendDocToDoc(bd: BackendDocument): Doc {
+  return {
+    id:       bd._id,
+    name:     bd.originalFileName,
+    type:     "pdf",
+    size:     0,                          // not stored — not needed after restore
+    status:   bd.processingStatus === "completed" ? "ready" : "error",
+    progress: 100,
+    summary:  bd.summary,
+    keyPoints: [],
+    qaList:   [],
+    courseOutline: bd.topics && bd.topics.length > 0
+      ? {
+          courseTitle: bd.courseTitle  ?? bd.title,
+          description: bd.courseDescription ?? "",
+          topics:      bd.topics as any,
+          fromCache:   true,
+        }
+      : undefined,
+  };
+}
+
+// ─── SSE stream helpers ───────────────────────────────────────────────────────
+
+function makeSSEStream(
+  url: string,
+  body: object,
+  token: string,
+  onDelta: (d: string) => void,
+  onDone:  ()          => void,
+  onError: (m: string) => void
+): AbortController {
+  const ctrl = new AbortController();
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify(body),
+        signal:  ctrl.signal,
+      });
+    } catch (err: any) {
+      if (err?.name !== "AbortError") onError(err?.message ?? "Network error.");
+      return;
+    }
+
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      onError(b.error ?? `Server error ${res.status}`);
+      return;
+    }
+
+    const reader  = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = "";
+
+    while (true) {
+      let done: boolean, value: Uint8Array | undefined;
+      try { ({ done, value } = await reader.read()); } catch { break; }
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const raw = line.slice(5).trim();
+        if (!raw) continue;
+        if (raw === "[DONE]") { onDone(); return; }
+        try {
+          const p = JSON.parse(raw);
+          if (p.error) { onError(p.error); return; }
+          if (p.delta) onDelta(p.delta);
+        } catch { /* skip */ }
+      }
+    }
+    onDone();
+  })();
+
+  return ctrl;
+}
+
+function streamExplanation(
+  { documentId, topic, token }:
+  { documentId: string; topic: Topic | null; token: string },
+  onDelta: (d: string) => void,
+  onDone:  ()          => void,
+  onError: (m: string) => void
+) {
+  return makeSSEStream(
+    backendUrl("/api/tutor/explain"),
+    { documentId, topic },
+    token, onDelta, onDone, onError
+  );
+}
+
+function streamChat(
+  { documentId, question, history, token }:
+  { documentId: string; question: string; history: { role: string; content: string }[]; token: string },
+  onDelta: (d: string) => void,
+  onDone:  ()          => void,
+  onError: (m: string) => void
+) {
+  return makeSSEStream(
+    backendUrl("/api/tutor/chat"),
+    { documentId, question, history },
+    token, onDelta, onDone, onError
+  );
+}
+
+// ─── API helper ───────────────────────────────────────────────────────────────
 
 async function fetchTopicsFromBackend(
   documentId: string,
@@ -44,168 +188,13 @@ async function fetchTopicsFromBackend(
 ): Promise<{ courseTitle: string; description: string; topics: Topic[] }> {
   const res = await fetch(
     backendUrl(`/api/topics/${encodeURIComponent(documentId)}`),
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    }
+    { headers: { Authorization: `Bearer ${token}` } }
   );
-
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `Topics request failed: ${res.status}`);
   }
-
   return res.json();
-}
-
-/**
- * Opens a streaming POST to /api/tutor/explain.
- * Calls onDelta(text) for every SSE chunk, onDone() when finished,
- * onError(msg) if something goes wrong.
- * Returns an AbortController so the caller can cancel.
- */
-function streamExplanation(
-  {
-    documentId,
-    topic,
-    token,
-  }: { documentId: string; topic: Topic | null; token: string },
-  onDelta: (delta: string) => void,
-  onDone:  ()              => void,
-  onError: (msg: string)   => void
-): AbortController {
-  const controller = new AbortController();
-
-  (async () => {
-    let res: Response;
-    try {
-      res = await fetch(backendUrl("/api/tutor/explain"), {
-        method:  "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization:  `Bearer ${token}`,
-        },
-        body:   JSON.stringify({ documentId, topic }),
-        signal: controller.signal,
-      });
-    } catch (err: any) {
-      if (err?.name !== "AbortError") onError(err?.message ?? "Network error.");
-      return;
-    }
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      onError(body.error ?? `Server error ${res.status}`);
-      return;
-    }
-
-    // Parse the SSE stream line-by-line
-    const reader  = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let   buffer  = "";
-
-    while (true) {
-      let done: boolean, value: Uint8Array | undefined;
-      try {
-        ({ done, value } = await reader.read());
-      } catch {
-        break; // aborted
-      }
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const raw = line.slice(5).trim();
-        if (!raw) continue;
-        if (raw === "[DONE]") { onDone(); return; }
-
-        try {
-          const payload = JSON.parse(raw);
-          if (payload.error) { onError(payload.error); return; }
-          if (payload.delta) onDelta(payload.delta);
-        } catch {
-          // malformed SSE frame — skip
-        }
-      }
-    }
-    onDone();
-  })();
-
-  return controller;
-}
-
-/**
- * Opens a streaming POST to /api/tutor/chat.
- * Same SSE parsing pattern as streamExplanation.
- */
-function streamChat(
-  {
-    documentId,
-    question,
-    history,
-    token,
-  }: { documentId: string; question: string; history: { role: string; content: string }[]; token: string },
-  onDelta: (delta: string) => void,
-  onDone:  ()              => void,
-  onError: (msg: string)   => void
-): AbortController {
-  const controller = new AbortController();
-
-  (async () => {
-    let res: Response;
-    try {
-      res = await fetch(backendUrl("/api/tutor/chat"), {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ documentId, question, history }),
-        signal:  controller.signal,
-      });
-    } catch (err: any) {
-      if (err?.name !== "AbortError") onError(err?.message ?? "Network error.");
-      return;
-    }
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      onError(body.error ?? `Server error ${res.status}`);
-      return;
-    }
-
-    const reader  = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let   buffer  = "";
-
-    while (true) {
-      let done: boolean, value: Uint8Array | undefined;
-      try { ({ done, value } = await reader.read()); } catch { break; }
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const raw = line.slice(5).trim();
-        if (!raw) continue;
-        if (raw === "[DONE]") { onDone(); return; }
-        try {
-          const payload = JSON.parse(raw);
-          if (payload.error) { onError(payload.error); return; }
-          if (payload.delta) onDelta(payload.delta);
-        } catch { /* skip malformed frame */ }
-      }
-    }
-    onDone();
-  })();
-
-  return controller;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -220,26 +209,63 @@ export default function DashboardClient() {
   }, [authLoading, user, router]);
 
   /* ── State ──────────────────────────────────────────────────────── */
-  const [docs,        setDocs]        = useState<Doc[]>([]);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [uploadedDocumentId, setUploadedDocumentId] = useState<string | null>(null);
-  const [msgs,        setMsgs]        = useState<Msg[]>(INITIAL_MESSAGES);
-  const [input,       setInput]       = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const [rightTab,    setRightTab]    = useState<RightTab>("summary");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rightOpen,   setRightOpen]   = useState(true);
-  const [dragging,    setDragging]    = useState(false);
-  const [signingOut,  setSigningOut]  = useState(false);
+  const [docs,          setDocs]          = useState<Doc[]>([]);
+  const [activeDocId,   setActiveDocId]   = useState<string | null>(null);
+  const [msgs,          setMsgs]          = useState<Msg[]>(INITIAL_MESSAGES);
+  const [input,         setInput]         = useState("");
+  const [chatLoading,   setChatLoading]   = useState(false);
+  const [rightTab,      setRightTab]      = useState<RightTab>("topics");
+  const [sidebarOpen,   setSidebarOpen]   = useState(true);
+  const [rightOpen,     setRightOpen]     = useState(true);
+  const [dragging,      setDragging]      = useState(false);
+  const [signingOut,    setSigningOut]    = useState(false);
+  const [docsLoading,   setDocsLoading]   = useState(true); // true while restoring docs
 
   const chatEndRef   = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
-  // ── NEW: holds the AbortController for the active SSE stream ─────
   const streamAbort  = useRef<AbortController | null>(null);
 
   const activeDoc = docs.find(d => d.id === activeDocId) ?? null;
   const readyDocs = docs.filter(d => d.status === "ready");
+
+  const chatRestored = useRef(false); // guard: don't persist before restore
+
+  /* ── Restore documents + chat from backend / localStorage ────────── */
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    // ── Restore chat SYNCHRONOUSLY first, before any async work ──────
+    // This prevents the persist effect from overwriting localStorage
+    // with INITIAL_MESSAGES before the saved chat is loaded.
+    if (!chatRestored.current) {
+      const savedMsgs = loadChat(user.uid);
+      setMsgs(savedMsgs);
+      chatRestored.current = true;
+    }
+
+    // ── Then restore documents from backend (async) ───────────────────
+    (async () => {
+      setDocsLoading(true);
+      try {
+        const token       = await auth.currentUser!.getIdToken();
+        const backendDocs = await fetchUserDocuments(token);
+        const restored    = backendDocs.map(backendDocToDoc);
+        setDocs(restored);
+        if (restored.length > 0) setActiveDocId(restored[0].id);
+      } catch (err) {
+        console.error("Failed to restore documents:", err);
+      } finally {
+        setDocsLoading(false);
+      }
+    })();
+  }, [authLoading, user]);
+
+  /* ── Persist chat to localStorage — only after restore is done ───── */
+  useEffect(() => {
+    if (!user || !chatRestored.current) return;
+    saveChat(user.uid, msgs);
+  }, [msgs, user]);
 
   /* ── Scroll chat to bottom ──────────────────────────────────────── */
   useEffect(() => {
@@ -265,67 +291,69 @@ export default function DashboardClient() {
     router.replace("/");
   }
 
-  /* ── Fetch topics (called after successful upload) ──────────────── */
+  /* ── Fetch topics ───────────────────────────────────────────────── */
   const fetchTopics = useCallback(async (documentId: string) => {
     if (!auth.currentUser) return;
-
-    setDocs(prev =>
-      prev.map(d =>
-        d.id === documentId ? { ...d, topicsLoading: true, topicsError: undefined } : d
-      )
-    );
-
+    setDocs(prev => prev.map(d =>
+      d.id === documentId ? { ...d, topicsLoading: true, topicsError: undefined } : d
+    ));
     try {
       const token = await auth.currentUser.getIdToken();
       const data  = await fetchTopicsFromBackend(documentId, token);
-
-      setDocs(prev =>
-        prev.map(d =>
-          d.id === documentId
-            ? {
-                ...d,
-                topicsLoading: false,
-                courseOutline: {
-                  courseTitle: data.courseTitle,
-                  description: data.description,
-                  topics:      data.topics,
-                  fromCache:   (data as any).fromCache ?? false,
-                },
-              }
-            : d
-        )
-      );
+      setDocs(prev => prev.map(d =>
+        d.id === documentId
+          ? {
+              ...d,
+              topicsLoading: false,
+              courseOutline: {
+                courseTitle: data.courseTitle,
+                description: data.description,
+                topics:      data.topics,
+                fromCache:   (data as any).fromCache ?? false,
+              },
+            }
+          : d
+      ));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load topics.";
-      setDocs(prev =>
-        prev.map(d =>
-          d.id === documentId
-            ? { ...d, topicsLoading: false, topicsError: message }
-            : d
-        )
-      );
+      setDocs(prev => prev.map(d =>
+        d.id === documentId ? { ...d, topicsLoading: false, topicsError: message } : d
+      ));
     }
   }, []);
 
-  /* ── Start tutor — REAL SSE streaming ───────────────────────────── */
+  /* ── Delete document — removes from DB + frontend state ─────────── */
+  const handleDeleteDoc = useCallback(async (docId: string) => {
+    // Optimistically remove from UI immediately
+    setDocs(prev => prev.filter(d => d.id !== docId));
+    if (activeDocId === docId) setActiveDocId(null);
+
+    try {
+      const token = await auth.currentUser!.getIdToken();
+      await deleteDocumentFromBackend(docId, token);
+    } catch (err) {
+      console.error("Failed to delete document from backend:", err);
+      // Don't re-add to UI — the user already dismissed it.
+      // A page refresh will reconcile with the real DB state.
+    }
+  }, [activeDocId]);
+
+  /* ── Start tutor — SSE explanation ─────────────────────────────── */
   const handleStartTutor = useCallback(async (topic: Topic | null) => {
     const doc = activeDoc;
     if (!doc || !auth.currentUser) return;
 
-    // Cancel any previous in-flight stream
     streamAbort.current?.abort();
     streamAbort.current = null;
 
-    // Friendly label shown in the user bubble
     const userLabel = topic
       ? `Teach me: **"${topic.title}"**`
       : `Start teaching me "${doc.name}" from the beginning`;
 
     setMsgs(prev => [...prev, { id: createId(), role: "user", content: userLabel }]);
     setChatLoading(true);
-    setRightTab("summary"); // focus chat area
+    setRightTab("topics");
 
-    // Empty AI bubble that fills up as tokens arrive
     const aiId = createId();
     setMsgs(prev => [...prev, { id: aiId, role: "assistant", content: "", streaming: true }]);
 
@@ -334,45 +362,31 @@ export default function DashboardClient() {
       token = await auth.currentUser.getIdToken();
     } catch {
       setMsgs(prev => prev.map(m =>
-        m.id === aiId
-          ? { ...m, content: "Authentication error — please sign in again.", streaming: false }
-          : m
+        m.id === aiId ? { ...m, content: "Authentication error — please sign in again.", streaming: false } : m
       ));
       setChatLoading(false);
       return;
     }
 
-    // Accumulate text outside React state to avoid stale closure issues
     let accumulated = "";
 
-    const controller = streamExplanation(
+    const ctrl = streamExplanation(
       { documentId: doc.id, topic, token },
-
-      // onDelta — called for every text chunk from Gemini
       (delta) => {
         accumulated += delta;
-        const snapshot = accumulated;
-        setMsgs(prev => prev.map(m =>
-          m.id === aiId ? { ...m, content: snapshot } : m
-        ));
+        const snap = accumulated;
+        setMsgs(prev => prev.map(m => m.id === aiId ? { ...m, content: snap } : m));
       },
-
-      // onDone — stream finished cleanly
       () => {
-        setMsgs(prev => prev.map(m =>
-          m.id === aiId ? { ...m, streaming: false } : m
-        ));
+        setMsgs(prev => prev.map(m => m.id === aiId ? { ...m, streaming: false } : m));
         setChatLoading(false);
         streamAbort.current = null;
       },
-
-      // onError — show error in the bubble
       (errMsg) => {
         setMsgs(prev => prev.map(m =>
           m.id === aiId
             ? {
-                ...m,
-                streaming: false,
+                ...m, streaming: false,
                 content: accumulated
                   ? accumulated + `\n\n⚠️ Stream interrupted: ${errMsg}`
                   : `Sorry, I couldn't generate an explanation: ${errMsg}`,
@@ -384,16 +398,17 @@ export default function DashboardClient() {
       }
     );
 
-    streamAbort.current = controller;
+    streamAbort.current = ctrl;
   }, [activeDoc]);
 
   /* ── File upload ─────────────────────────────────────────────────── */
   const handleFiles = useCallback(async (files: FileList | File[]) => {
-    const arr = Array.from(files);
+    const arr  = Array.from(files);
+    const pdfs = arr.filter(f => f.type === "application/pdf");
 
-    if (!arr.length) {
+    if (!pdfs.length) {
       setMsgs(prev => [...prev, { id: createId(), role: "assistant",
-        content: "Please select a PDF file before uploading." }]);
+        content: "Only PDF files are supported. Please choose a PDF and try again." }]);
       return;
     }
 
@@ -404,71 +419,50 @@ export default function DashboardClient() {
     }
     const currentUser = auth.currentUser;
 
-    const pdfs = arr.filter(f => f.type === "application/pdf");
-    if (!pdfs.length) {
-      setMsgs(prev => [...prev, { id: createId(), role: "assistant",
-        content: "Only PDF files are supported right now. Please choose a PDF and try again." }]);
-      return;
-    }
-
     for (const file of pdfs) {
-      const id = crypto.randomUUID();
-      const newDoc: Doc = {
-        id, name: file.name, type: getDocType(file),
+      const tempId = crypto.randomUUID();
+      setDocs(prev => [...prev, {
+        id: tempId, name: file.name, type: getDocType(file),
         size: file.size, status: "uploading", progress: 0,
-      };
-      setDocs(prev => [...prev, newDoc]);
-      setActiveDocId(id);
-      setRightTab("summary");
+      }]);
+      setActiveDocId(tempId);
+      setRightTab("topics");
 
       try {
         const token = await currentUser.getIdToken();
-        setDocs(prev => prev.map(d => d.id === id ? { ...d, progress: 35 } : d));
+        setDocs(prev => prev.map(d => d.id === tempId ? { ...d, progress: 35 } : d));
 
-        const data = await uploadPdfToBackend(file, token, id);
+        const data = await uploadPdfToBackend(file, token, tempId);
 
-        setDocs(prev => prev.map(d =>
-          d.id === id ? { ...d, status: "processing", progress: 90 } : d
-        ));
-        setUploadedDocumentId(data.documentId);
+        setDocs(prev => prev.map(d => d.id === tempId
+          ? { ...d, status: "processing", progress: 90 } : d));
 
-        setDocs(prev => prev.map(d =>
-          d.id === id ? {
-            ...d,
-            id:       data.documentId,
-            status:   "ready",
-            progress: 100,
-            summary:  `PDF uploaded successfully. Processed ${data.chunkCount} chunks across ${data.pageCount} pages. Use the Topics tab to see your course outline, or start chatting.`,
-            keyPoints: [
-              `${data.chunkCount} content chunks extracted`,
-              `${data.pageCount} pages processed`,
-              "Course outline is being generated — check the Topics tab",
-              "Ask questions in the chat once the chat API is connected",
-            ],
-            qaList: [
-              {
-                q: "Where do I start?",
-                a: "Open the Topics tab in the right panel to see a full course outline extracted from your document. Click any topic to start learning it.",
-              },
-            ],
-          } : d
-        ));
+        setDocs(prev => prev.map(d => d.id === tempId ? {
+          ...d,
+          id:       data.documentId,
+          status:   "ready",
+          progress: 100,
+          summary:  `PDF uploaded. ${data.chunkCount} chunks across ${data.pageCount} pages.`,
+          keyPoints: [
+            `${data.chunkCount} chunks extracted`,
+            `${data.pageCount} pages processed`,
+          ],
+          qaList: [],
+        } : d));
         setActiveDocId(data.documentId);
 
         setMsgs(prev => [...prev, {
           id: createId(), role: "assistant",
-          content: `✅ **${file.name}** uploaded and processed!\n\n` +
-            `- **${data.chunkCount}** content chunks extracted\n` +
-            `- **${data.pageCount}** pages analysed\n\n` +
-            `Open the **Topics** tab on the right to see your personalised course outline. ` +
-            `You can start from the beginning or jump to any topic.`,
+          content:
+            `✅ **${file.name}** uploaded!\n\n` +
+            `- **${data.chunkCount}** chunks · **${data.pageCount}** pages\n\n` +
+            `Open the **Topics** tab to see your course outline.`,
         }]);
 
-        setRightTab("topics");
         fetchTopics(data.documentId);
 
       } catch (error) {
-        setDocs(prev => prev.map(d => d.id === id ? { ...d, status: "error" } : d));
+        setDocs(prev => prev.map(d => d.id === tempId ? { ...d, status: "error" } : d));
         setMsgs(prev => [...prev, {
           id: createId(), role: "assistant",
           content: error instanceof Error ? error.message : "Upload failed",
@@ -487,12 +481,11 @@ export default function DashboardClient() {
     if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   }
 
-  /* ── Send message — REAL streaming chat ─────────────────────────── */
+  /* ── Send message — streaming chat ──────────────────────────────── */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || chatLoading) return;
 
-    // No document uploaded yet
     if (!activeDoc || activeDoc.status !== "ready") {
       setMsgs(prev => [...prev,
         { id: createId(), role: "user",      content: text },
@@ -506,18 +499,14 @@ export default function DashboardClient() {
     streamAbort.current?.abort();
     streamAbort.current = null;
 
-    // Snapshot current history BEFORE adding the new user message
-    // (last 10 non-empty messages for context, excluding the initial welcome)
     const historySnapshot = msgs
       .filter(m => m.content && !m.streaming)
       .slice(-10)
       .map(m => ({ role: m.role, content: m.content }));
 
-    // Add user bubble
     setMsgs(prev => [...prev, { id: createId(), role: "user", content: text }]);
     setChatLoading(true);
 
-    // Add empty AI bubble
     const aiId = createId();
     setMsgs(prev => [...prev, { id: aiId, role: "assistant", content: "", streaming: true }]);
 
@@ -526,9 +515,7 @@ export default function DashboardClient() {
       token = await auth.currentUser!.getIdToken();
     } catch {
       setMsgs(prev => prev.map(m =>
-        m.id === aiId
-          ? { ...m, content: "Authentication error — please sign in again.", streaming: false }
-          : m
+        m.id === aiId ? { ...m, content: "Authentication error — please sign in again.", streaming: false } : m
       ));
       setChatLoading(false);
       return;
@@ -536,27 +523,23 @@ export default function DashboardClient() {
 
     let accumulated = "";
 
-    const controller = streamChat(
+    const ctrl = streamChat(
       { documentId: activeDoc.id, question: text, history: historySnapshot, token },
-
       (delta) => {
         accumulated += delta;
-        const snapshot = accumulated;
-        setMsgs(prev => prev.map(m => m.id === aiId ? { ...m, content: snapshot } : m));
+        const snap = accumulated;
+        setMsgs(prev => prev.map(m => m.id === aiId ? { ...m, content: snap } : m));
       },
-
       () => {
         setMsgs(prev => prev.map(m => m.id === aiId ? { ...m, streaming: false } : m));
         setChatLoading(false);
         streamAbort.current = null;
       },
-
       (errMsg) => {
         setMsgs(prev => prev.map(m =>
           m.id === aiId
             ? {
-                ...m,
-                streaming: false,
+                ...m, streaming: false,
                 content: accumulated
                   ? accumulated + `\n\n⚠️ ${errMsg}`
                   : `Sorry, something went wrong: ${errMsg}`,
@@ -568,19 +551,17 @@ export default function DashboardClient() {
       }
     );
 
-    streamAbort.current = controller;
+    streamAbort.current = ctrl;
   }, [input, chatLoading, activeDoc, msgs]);
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   }
 
-  /* ── Stop the active stream ─────────────────────────────────────── */
   function handleStopStream() {
     streamAbort.current?.abort();
     streamAbort.current = null;
     setChatLoading(false);
-    // Mark the last streaming bubble as stopped
     setMsgs(prev => prev.map((m, i) =>
       i === prev.length - 1 && m.streaming
         ? { ...m, streaming: false, content: m.content + "\n\n*(stopped)*" }
@@ -588,19 +569,17 @@ export default function DashboardClient() {
     ));
   }
 
-  /* ── Loading screen ──────────────────────────────────────────────── */
-  if (authLoading) {
-    return (
-      <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center",
-        justifyContent: "center", background: "var(--bg)" }}>
-        <span className="spinner" style={{ width: 24, height: 24, color: "var(--text-3)" }} />
-      </div>
-    );
-  }
+  /* ── Loading screens ─────────────────────────────────────────────── */
+  if (authLoading) return (
+    <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center",
+      justifyContent: "center", background: "var(--bg)" }}>
+      <span className="spinner" style={{ width: 24, height: 24, color: "var(--text-3)" }} />
+    </div>
+  );
   if (!user) return null;
 
   /* ═══════════════════════════════════════════════════════════════════
-     RENDER — identical structure to your current file
+     RENDER
   ══════════════════════════════════════════════════════════════════ */
   return (
     <div
@@ -610,19 +589,13 @@ export default function DashboardClient() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* ── Global drag overlay ──────────────────────────────────── */}
+      {/* Drag overlay */}
       {dragging && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 100,
-          background: "rgba(13,14,20,0.88)",
-          display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center",
-          backdropFilter: "blur(6px)", gap: 16,
-        }}>
-          <div style={{
-            border: "2px dashed var(--accent)", borderRadius: "var(--radius-xl)",
-            padding: "64px 96px", textAlign: "center", background: "rgba(232,255,71,0.04)",
-          }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(13,14,20,0.88)",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(6px)", gap: 16 }}>
+          <div style={{ border: "2px dashed var(--accent)", borderRadius: "var(--radius-xl)",
+            padding: "64px 96px", textAlign: "center", background: "rgba(232,255,71,0.04)" }}>
             <div style={{ fontSize: "3rem", marginBottom: 16, opacity: 0.8 }}>⬆</div>
             <p className="font-display" style={{ fontSize: "1.6rem", color: "var(--accent)", marginBottom: 8 }}>
               Drop to upload
@@ -632,21 +605,13 @@ export default function DashboardClient() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════
-          LEFT SIDEBAR
-      ══════════════════════════════════════════════════════════════ */}
+      {/* ══ LEFT SIDEBAR ═════════════════════════════════════════════ */}
       {sidebarOpen && (
-        <aside style={{
-          width: 264, flexShrink: 0,
-          borderRight: "1px solid var(--border)",
-          background: "var(--bg-2)",
-          display: "flex", flexDirection: "column", overflow: "hidden",
-        }}>
-          {/* Logo row */}
-          <div style={{
-            padding: "18px 18px 14px", borderBottom: "1px solid var(--border)",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-          }}>
+        <aside style={{ width: 264, flexShrink: 0, borderRight: "1px solid var(--border)",
+          background: "var(--bg-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+          <div style={{ padding: "18px 18px 14px", borderBottom: "1px solid var(--border)",
+            display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <LogoMark size={30} />
             <button className="btn btn-icon" onClick={() => setSidebarOpen(false)}
               title="Collapse" style={{ width: 30, height: 30 }}>
@@ -656,7 +621,6 @@ export default function DashboardClient() {
             </button>
           </div>
 
-          {/* Upload button */}
           <div style={{ padding: "14px 14px 8px" }}>
             <input ref={fileInputRef} type="file" multiple accept=".pdf,application/pdf"
               style={{ display: "none" }}
@@ -671,7 +635,15 @@ export default function DashboardClient() {
 
           {/* Document list */}
           <div style={{ flex: 1, overflowY: "auto", padding: "4px 10px" }}>
-            {docs.length === 0 ? (
+            {docsLoading ? (
+              /* Skeleton while restoring */
+              <div style={{ padding: "14px 4px", display: "flex", flexDirection: "column", gap: 8 }}>
+                {[1,2,3].map(i => (
+                  <div key={i} style={{ height: 48, borderRadius: "var(--radius)",
+                    background: "var(--bg-3)", opacity: 0.6 }} />
+                ))}
+              </div>
+            ) : docs.length === 0 ? (
               <div style={{ padding: "32px 16px", textAlign: "center",
                 color: "var(--text-3)", fontSize: "0.875rem", lineHeight: 1.7 }}>
                 <div style={{ fontSize: "2rem", marginBottom: 10, opacity: 0.3 }}>📂</div>
@@ -688,10 +660,7 @@ export default function DashboardClient() {
                     key={doc.id} doc={doc}
                     active={doc.id === activeDocId}
                     onClick={() => { setActiveDocId(doc.id); setRightTab("topics"); }}
-                    onDelete={() => {
-                      setDocs(prev => prev.filter(d => d.id !== doc.id));
-                      if (activeDocId === doc.id) setActiveDocId(null);
-                    }}
+                    onDelete={() => handleDeleteDoc(doc.id)}
                   />
                 ))}
               </>
@@ -701,12 +670,9 @@ export default function DashboardClient() {
           {/* User footer */}
           <div style={{ borderTop: "1px solid var(--border)", padding: "14px 16px",
             display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: "50%",
-              background: "var(--accent)", color: "#0d0e14",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "0.8125rem", fontWeight: 600, flexShrink: 0,
-            }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--accent)",
+              color: "#0d0e14", display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "0.8125rem", fontWeight: 600, flexShrink: 0 }}>
               {user.email?.[0]?.toUpperCase() ?? "U"}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -718,26 +684,17 @@ export default function DashboardClient() {
             <button className="btn btn-ghost"
               style={{ padding: "5px 8px", fontSize: "0.75rem", flexShrink: 0 }}
               onClick={handleSignOut} disabled={signingOut} title="Sign out">
-              {signingOut
-                ? <span className="spinner" style={{ width: 13, height: 13 }} />
-                : "↩"}
+              {signingOut ? <span className="spinner" style={{ width: 13, height: 13 }} /> : "↩"}
             </button>
           </div>
         </aside>
       )}
 
-      {/* ════════════════════════════════════════════════════════════
-          CENTER: CHAT
-      ══════════════════════════════════════════════════════════════ */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column",
-        overflow: "hidden", minWidth: 0 }}>
+      {/* ══ CENTER CHAT ══════════════════════════════════════════════ */}
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
-        {/* Top bar */}
-        <header style={{
-          height: 54, flexShrink: 0, borderBottom: "1px solid var(--border)",
-          display: "flex", alignItems: "center", padding: "0 18px", gap: 10,
-          background: "var(--bg-2)",
-        }}>
+        <header style={{ height: 54, flexShrink: 0, borderBottom: "1px solid var(--border)",
+          display: "flex", alignItems: "center", padding: "0 18px", gap: 10, background: "var(--bg-2)" }}>
           {!sidebarOpen && (
             <button className="btn btn-icon" onClick={() => setSidebarOpen(true)} title="Open sidebar">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -745,7 +702,6 @@ export default function DashboardClient() {
               </svg>
             </button>
           )}
-
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
             {activeDoc ? (
               <>
@@ -757,11 +713,9 @@ export default function DashboardClient() {
                 </span>
                 <StatusBadge status={activeDoc.status} />
                 {activeDoc.courseOutline && (
-                  <span style={{
-                    fontSize: "0.6875rem", color: "var(--accent)",
+                  <span style={{ fontSize: "0.6875rem", color: "var(--accent)",
                     background: "rgba(232,255,71,0.1)", border: "1px solid rgba(232,255,71,0.2)",
-                    borderRadius: 20, padding: "2px 8px", fontWeight: 600,
-                  }}>
+                    borderRadius: 20, padding: "2px 8px", fontWeight: 600 }}>
                     {activeDoc.courseOutline.topics.length} topics
                   </span>
                 )}
@@ -772,23 +726,21 @@ export default function DashboardClient() {
               </span>
             )}
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {/* ── Stop button — only shown while SSE streaming ── */}
             {chatLoading && streamAbort.current && (
-              <button
-                className="btn btn-ghost"
-                style={{ fontSize: "0.8125rem", padding: "6px 12px",
-                  color: "var(--accent)", borderColor: "rgba(232,255,71,0.25)" }}
-                onClick={handleStopStream}
-              >
+              <button className="btn btn-ghost"
+                style={{ fontSize: "0.8125rem", padding: "6px 12px", color: "var(--accent)" }}
+                onClick={handleStopStream}>
                 ◼ Stop
               </button>
             )}
             {msgs.length > 1 && !chatLoading && (
               <button className="btn btn-ghost"
                 style={{ fontSize: "0.8125rem", padding: "6px 12px" }}
-                onClick={() => setMsgs(INITIAL_MESSAGES)}>
+                onClick={() => {
+                  setMsgs(INITIAL_MESSAGES);
+                  if (user) saveChat(user.uid, INITIAL_MESSAGES);
+                }}>
                 Clear chat
               </button>
             )}
@@ -820,12 +772,8 @@ export default function DashboardClient() {
         {/* Suggested prompts */}
         {msgs.length === 1 && readyDocs.length > 0 && (
           <div style={{ padding: "0 24px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[
-              "Summarise this document for me",
-              "Explain the main concepts simply",
-              "What are the key things I should know?",
-              "Quiz me on this material",
-            ].map(prompt => (
+            {["Summarise this document", "Explain the main concepts simply",
+              "What should I know?", "Quiz me on this"].map(prompt => (
               <button key={prompt} className="btn btn-outline"
                 style={{ fontSize: "0.8125rem", padding: "8px 14px" }}
                 onClick={() => { setInput(prompt); textareaRef.current?.focus(); }}>
@@ -835,13 +783,11 @@ export default function DashboardClient() {
           </div>
         )}
 
-        {/* Input area */}
+        {/* Input */}
         <div style={{ borderTop: "1px solid var(--border)", padding: "14px 20px", background: "var(--bg-2)" }}>
-          <div style={{
-            display: "flex", gap: 10, alignItems: "flex-end",
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end",
             background: "var(--bg-3)", border: "1px solid var(--border-2)",
-            borderRadius: "var(--radius-lg)", padding: "10px 10px 10px 16px",
-          }}>
+            borderRadius: "var(--radius-lg)", padding: "10px 10px 10px 16px" }}>
             <input type="file" multiple accept=".pdf,application/pdf"
               style={{ display: "none" }} id="chat-file"
               onChange={e => e.target.files && handleFiles(e.target.files)} />
@@ -849,9 +795,7 @@ export default function DashboardClient() {
               style={{ color: "var(--text-3)", cursor: "pointer", fontSize: "1.25rem",
                 lineHeight: 1, paddingBottom: 7, flexShrink: 0, transition: "color 0.15s" }}
               onMouseEnter={e => (e.currentTarget.style.color = "var(--accent)")}
-              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-3)")}>
-              ⊕
-            </label>
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-3)")}>⊕</label>
             <textarea ref={textareaRef} value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown} disabled={chatLoading}
@@ -861,22 +805,17 @@ export default function DashboardClient() {
                   : "Upload a document first…"
               }
               rows={1}
-              style={{
-                flex: 1, background: "none", border: "none", outline: "none",
-                fontFamily: "var(--font-body)", fontSize: "0.9375rem",
-                color: "var(--text)", resize: "none", lineHeight: 1.6,
-                paddingTop: 6, minHeight: 28, maxHeight: 160,
-              }} />
+              style={{ flex: 1, background: "none", border: "none", outline: "none",
+                fontFamily: "var(--font-body)", fontSize: "0.9375rem", color: "var(--text)",
+                resize: "none", lineHeight: 1.6, paddingTop: 6, minHeight: 28, maxHeight: 160 }} />
             <button onClick={sendMessage} disabled={!input.trim() || chatLoading}
-              style={{
-                width: 38, height: 38, flexShrink: 0,
+              style={{ width: 38, height: 38, flexShrink: 0,
                 background: input.trim() && !chatLoading ? "var(--accent)" : "var(--bg-4)",
                 border: "none", borderRadius: "var(--radius)",
                 cursor: input.trim() && !chatLoading ? "pointer" : "default",
                 color: input.trim() && !chatLoading ? "#0d0e14" : "var(--text-3)",
                 fontSize: "1.05rem", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.15s",
-              }}>
+                transition: "all 0.15s" }}>
               {chatLoading
                 ? <span className="spinner" style={{ width: 15, height: 15 }} />
                 : "↑"}
@@ -889,19 +828,15 @@ export default function DashboardClient() {
         </div>
       </main>
 
-      {/* ════════════════════════════════════════════════════════════
-          RIGHT PANEL
-      ══════════════════════════════════════════════════════════════ */}
+      {/* ══ RIGHT PANEL ══════════════════════════════════════════════ */}
       {rightOpen && (
-        <aside style={{
-          width: 320, flexShrink: 0, borderLeft: "1px solid var(--border)",
-          background: "var(--bg-2)", display: "flex", flexDirection: "column", overflow: "hidden",
-        }}>
-          {/* Tab bar */}
+        <aside style={{ width: 320, flexShrink: 0, borderLeft: "1px solid var(--border)",
+          background: "var(--bg-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
           <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)",
             display: "flex", alignItems: "center", gap: 8 }}>
             <div className="tab-bar" style={{ flex: 1 }}>
-              {(["topics", "summary", "keypoints", "qa"] as RightTab[]).map(t => (
+              {(["topics"] as RightTab[]).map(t => (
                 <div key={t} className={`tab-item${rightTab === t ? " active" : ""}`}
                   onClick={() => setRightTab(t)}>
                   {{ topics: "Topics", summary: "Summary", keypoints: "Key Points", qa: "Q & A" }[t]}
@@ -916,25 +851,22 @@ export default function DashboardClient() {
             </button>
           </div>
 
-          {/* Panel content */}
           <div style={{ flex: 1, overflowY: "auto", padding: "18px 16px" }}>
             {!activeDoc ? (
               <EmptyState icon="📄" title="No document selected"
-                desc="Select or upload a document to see its course outline, summary, key points, and Q&A." />
+                desc="Select or upload a document to see its course outline." />
             ) : activeDoc.status !== "ready" ? (
               <ProcessingState status={activeDoc.status} progress={activeDoc.progress} name={activeDoc.name} />
             ) : (
               <>
-                {rightTab === "topics"    && <TopicsPanel doc={activeDoc} onStartTutor={handleStartTutor} />}
-                {rightTab === "summary"   && <SummaryPanel doc={activeDoc} />}
-                {rightTab === "keypoints" && <KeyPointsPanel doc={activeDoc} />}
-                {rightTab === "qa"        && <QAPanel doc={activeDoc}
-                  onAsk={q => { setInput(q); textareaRef.current?.focus(); }} />}
+                {rightTab === "topics" && <TopicsPanel doc={activeDoc} onStartTutor={handleStartTutor} />}
+                {/* rightTab === "summary"   && <SummaryPanel doc={activeDoc} /> */}
+                {/* rightTab === "keypoints" && <KeyPointsPanel doc={activeDoc} /> */}
+                {/* rightTab === "qa"        && <QAPanel doc={activeDoc} onAsk={...} /> */}
               </>
             )}
           </div>
 
-          {/* Drop zone at bottom */}
           <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
             <div className="dropzone" style={{ padding: "22px 16px" }}
               onClick={() => fileInputRef.current?.click()}>
