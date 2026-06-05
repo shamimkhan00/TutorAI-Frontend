@@ -4,6 +4,7 @@ import { markdownToHtml } from "../_lib/markdown";
 export function AiAvatar() {
   return (
     <div
+      className="chat-avatar"
       style={{
         width: 32,
         height: 32,
@@ -29,7 +30,8 @@ export function ChatMessage({ msg }: { msg: Msg }) {
 
   return (
     <div
-      className="animate-fade-in"
+      className="chat-message-row animate-fade-in"
+      data-role={msg.role}
       style={{
         display: "flex",
         flexDirection: isUser ? "row-reverse" : "row",
@@ -38,7 +40,7 @@ export function ChatMessage({ msg }: { msg: Msg }) {
       }}
     >
       {!isUser && <AiAvatar />}
-      <div style={{ maxWidth: isUser ? "72%" : "82%" }}>
+      <div className="chat-message-bubble-wrap">
         <div className={isUser ? "bubble-user" : "bubble-ai"}>
           {isUser ? (
             <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>

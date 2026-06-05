@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { formatFileSize, getDocIcon } from "../_lib/dashboard-utils";
 import type { Doc } from "../_types/dashboard";
@@ -16,6 +16,21 @@ export function SidebarDocItem({
   onDelete: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(max-width: 1024px)");
+    const sync = (matches: boolean) => setIsMobile(matches);
+
+    sync(media.matches);
+
+    const handleChange = (event: MediaQueryListEvent) => sync(event.matches);
+    media.addEventListener("change", handleChange);
+
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
 
   return (
     <div
@@ -63,7 +78,7 @@ export function SidebarDocItem({
           </div>
         )}
       </div>
-      {hovered && doc.status !== "uploading" && doc.status !== "processing" && (
+      {(hovered || isMobile) && doc.status !== "uploading" && doc.status !== "processing" && (
         <button
           onClick={(event) => {
             event.stopPropagation();

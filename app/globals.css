@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -29,6 +29,7 @@
 
   --font-display: "Instrument Serif", Georgia, serif;
   --font-body:    "Geist", system-ui, sans-serif;
+  --font-chat:    "Manrope", "Segoe UI", sans-serif;
   --font-mono:    "Geist Mono", monospace;
 
   --radius-sm:   8px;
@@ -275,9 +276,11 @@ body {
   color: #0d0e14;
   border-radius: 20px 20px 5px 20px;
   padding: 12px 18px;
-  max-width: 72%;
+  /* max-width: 72%; */
   line-height: 1.6;
   font-size: 0.9375rem;
+  font-family: var(--font-chat);
+  letter-spacing: -0.01em;
 }
 .bubble-ai {
   background: var(--surface-2);
@@ -288,6 +291,8 @@ body {
   max-width: 82%;
   line-height: 1.7;
   font-size: 0.9375rem;
+  font-family: var(--font-chat);
+  letter-spacing: -0.01em;
 }
 
 /* ─── Typing dots ────────────────────────────────────────────────────── */
@@ -427,7 +432,25 @@ body {
 }
 
 /* ─── AI prose (markdown inside chat) ───────────────────────────────── */
-.ai-prose { line-height: 1.72; font-size: 0.9375rem; }
+.chat-message-row {
+  width: 100%;
+}
+
+.chat-message-bubble-wrap {
+  max-width: 82%;
+}
+
+.chat-message-row[data-role="user"] .chat-message-bubble-wrap {
+  max-width: 72%;
+}
+
+.ai-prose {
+  line-height: 1.8;
+  font-size: 1rem;
+  font-family: var(--font-chat);
+  letter-spacing: -0.01em;
+  text-wrap: pretty;
+}
 .ai-prose h1,.ai-prose h2,.ai-prose h3 {
   font-family: var(--font-display);
   color: var(--text);
@@ -442,6 +465,11 @@ body {
 .ai-prose li { margin-bottom: 4px; }
 .ai-prose strong { color: var(--text); font-weight: 600; }
 .ai-prose em { color: var(--text-2); font-style: italic; }
+.ai-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
 .ai-prose code {
   font-family: var(--font-mono);
   font-size: 0.82em;
@@ -501,4 +529,27 @@ body::after {
 @media (max-width: 768px) {
   .auth-card { padding: 32px 26px; border-radius: var(--radius-lg); }
   .otp-input { width: 44px; height: 54px; font-size: 1.2rem; }
+  .chat-avatar {
+    display: none !important;
+  }
+  .bubble-user,
+  .bubble-ai {
+    max-width: 100%;
+    width: 100%;
+    padding: 13px 16px;
+    border-radius: 18px;
+    font-size: 0.9375rem;
+  }
+  .chat-message-row {
+    gap: 0;
+  }
+  .chat-message-bubble-wrap,
+  .chat-message-row[data-role="user"] .chat-message-bubble-wrap {
+    max-width: 100%;
+    /* width: 100%; */
+  }
+  .ai-prose {
+    font-size: 0.975rem;
+    line-height: 1.76;
+  }
 }

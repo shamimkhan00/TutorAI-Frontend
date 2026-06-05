@@ -23,7 +23,7 @@ export function useAuthUser(): AuthUserState {
         nextUser
           .getIdToken()
           .then((token) => {
-            console.log("Firebase ID token for Postman:", token);
+            // console.log("Firebase ID token for Postman:", token);
           })
           .catch((error) => {
             console.error("Failed to get Firebase ID token:", error);

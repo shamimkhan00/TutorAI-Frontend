@@ -220,6 +220,7 @@ export default function DashboardClient() {
   const [dragging,      setDragging]      = useState(false);
   const [signingOut,    setSigningOut]    = useState(false);
   const [docsLoading,   setDocsLoading]   = useState(true); // true while restoring docs
+  const [isMobile,      setIsMobile]      = useState(false);
 
   const chatEndRef   = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -228,8 +229,28 @@ export default function DashboardClient() {
 
   const activeDoc = docs.find(d => d.id === activeDocId) ?? null;
   const readyDocs = docs.filter(d => d.status === "ready");
+  const mobilePanelOpen = isMobile && (sidebarOpen || rightOpen);
 
   const chatRestored = useRef(false); // guard: don't persist before restore
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(max-width: 1024px)");
+    const sync = (matches: boolean) => setIsMobile(matches);
+
+    sync(media.matches);
+
+    const handleChange = (event: MediaQueryListEvent) => sync(event.matches);
+    media.addEventListener("change", handleChange);
+
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    setSidebarOpen(!isMobile);
+    setRightOpen(!isMobile);
+  }, [isMobile]);
 
   /* ── Restore documents + chat from backend / localStorage ────────── */
   useEffect(() => {
@@ -350,6 +371,7 @@ export default function DashboardClient() {
       ? `Teach me: **"${topic.title}"**`
       : `Start teaching me "${doc.name}" from the beginning`;
 
+    if (isMobile) setRightOpen(false);
     setMsgs(prev => [...prev, { id: createId(), role: "user", content: userLabel }]);
     setChatLoading(true);
     setRightTab("topics");
@@ -399,7 +421,7 @@ export default function DashboardClient() {
     );
 
     streamAbort.current = ctrl;
-  }, [activeDoc]);
+  }, [activeDoc, isMobile]);
 
   /* ── File upload ─────────────────────────────────────────────────── */
   const handleFiles = useCallback(async (files: FileList | File[]) => {
@@ -450,6 +472,10 @@ export default function DashboardClient() {
           qaList: [],
         } : d));
         setActiveDocId(data.documentId);
+        if (isMobile) {
+          setSidebarOpen(false);
+          setRightOpen(true);
+        }
 
         setMsgs(prev => [...prev, {
           id: createId(), role: "assistant",
@@ -469,7 +495,7 @@ export default function DashboardClient() {
         }]);
       }
     }
-  }, [fetchTopics]);
+  }, [fetchTopics, isMobile]);
 
   /* ── Drag & drop ─────────────────────────────────────────────────── */
   function handleDragOver(e: DragEvent)  { e.preventDefault(); setDragging(true); }
@@ -569,6 +595,21 @@ export default function DashboardClient() {
     ));
   }
 
+  function openSidebar() {
+    if (isMobile) setRightOpen(false);
+    setSidebarOpen(true);
+  }
+
+  function openRightPanel() {
+    if (isMobile) setSidebarOpen(false);
+    setRightOpen(true);
+  }
+
+  function closePanels() {
+    setSidebarOpen(false);
+    setRightOpen(false);
+  }
+
   /* ── Loading screens ─────────────────────────────────────────────── */
   if (authLoading) return (
     <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center",
@@ -605,10 +646,41 @@ export default function DashboardClient() {
         </div>
       )}
 
+      {mobilePanelOpen && (
+        <button
+          aria-label="Close open panel"
+          onClick={closePanels}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 29,
+            border: "none",
+            background: "rgba(5,7,12,0.58)",
+            backdropFilter: "blur(6px)",
+            cursor: "pointer",
+          }}
+        />
+      )}
+
       {/* ══ LEFT SIDEBAR ═════════════════════════════════════════════ */}
       {sidebarOpen && (
-        <aside style={{ width: 264, flexShrink: 0, borderRight: "1px solid var(--border)",
-          background: "var(--bg-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <aside style={{
+          width: isMobile ? "min(86vw, 320px)" : 264,
+          flexShrink: 0,
+          borderRight: "1px solid var(--border)",
+          background: "var(--bg-2)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          ...(isMobile
+            ? {
+                position: "fixed",
+                inset: "0 auto 0 0",
+                zIndex: 30,
+                boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+              }
+            : {}),
+        }}>
 
           <div style={{ padding: "18px 18px 14px", borderBottom: "1px solid var(--border)",
             display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -659,7 +731,11 @@ export default function DashboardClient() {
                   <SidebarDocItem
                     key={doc.id} doc={doc}
                     active={doc.id === activeDocId}
-                    onClick={() => { setActiveDocId(doc.id); setRightTab("topics"); }}
+                    onClick={() => {
+                      setActiveDocId(doc.id);
+                      setRightTab("topics");
+                      if (isMobile) setSidebarOpen(false);
+                    }}
                     onDelete={() => handleDeleteDoc(doc.id)}
                   />
                 ))}
@@ -684,22 +760,53 @@ export default function DashboardClient() {
             <button className="btn btn-ghost"
               style={{ padding: "5px 8px", fontSize: "0.75rem", flexShrink: 0 }}
               onClick={handleSignOut} disabled={signingOut} title="Sign out">
-              {signingOut ? <span className="spinner" style={{ width: 13, height: 13 }} /> : "↩"}
+              {signingOut ? (
+                <span className="spinner" style={{ width: 13, height: 13 }} />
+              ) : (
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M6 2.5H3.75A1.25 1.25 0 0 0 2.5 3.75v8.5A1.25 1.25 0 0 0 3.75 13.5H6" />
+                  <path d="M10 5.25 13.25 8 10 10.75" />
+                  <path d="M6.5 8h6.25" />
+                </svg>
+              )}
             </button>
           </div>
         </aside>
       )}
 
       {/* ══ CENTER CHAT ══════════════════════════════════════════════ */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <main style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minWidth: 0,
+        width: isMobile ? "100%" : undefined,
+      }}>
 
-        <header style={{ height: 54, flexShrink: 0, borderBottom: "1px solid var(--border)",
-          display: "flex", alignItems: "center", padding: "0 18px", gap: 10, background: "var(--bg-2)" }}>
-          {!sidebarOpen && (
-            <button className="btn btn-icon" onClick={() => setSidebarOpen(true)} title="Open sidebar">
+        <header style={{ minHeight: 54, flexShrink: 0, borderBottom: "1px solid var(--border)",
+          display: "flex", alignItems: "center", padding: isMobile ? "10px 12px" : "0 18px", gap: 10, background: "var(--bg-2)" }}>
+          {!sidebarOpen && !isMobile && (
+            <button className="btn btn-icon" onClick={openSidebar} title="Open sidebar">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M5 2l5 5-5 5" />
               </svg>
+            </button>
+          )}
+          {isMobile && (
+            <button className="btn btn-ghost" onClick={openSidebar}
+              style={{ fontSize: "0.8125rem", padding: "7px 10px", color: "var(--text)" }}>
+              Docs
             </button>
           )}
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
@@ -712,7 +819,7 @@ export default function DashboardClient() {
                   {activeDoc.name}
                 </span>
                 <StatusBadge status={activeDoc.status} />
-                {activeDoc.courseOutline && (
+                {activeDoc.courseOutline && !isMobile && (
                   <span style={{ fontSize: "0.6875rem", color: "var(--accent)",
                     background: "rgba(232,255,71,0.1)", border: "1px solid rgba(232,255,71,0.2)",
                     borderRadius: 20, padding: "2px 8px", fontWeight: 600 }}>
@@ -744,8 +851,13 @@ export default function DashboardClient() {
                 Clear chat
               </button>
             )}
-            {!rightOpen && (
-              <button className="btn btn-icon" onClick={() => setRightOpen(true)} title="Open panel">
+            {isMobile ? (
+              <button className="btn btn-ghost" onClick={openRightPanel}
+                style={{ fontSize: "0.8125rem", padding: "7px 10px", color: "var(--text)" }}>
+                Study
+              </button>
+            ) : !rightOpen && (
+              <button className="btn btn-icon" onClick={openRightPanel} title="Open panel">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <path d="M9 2l-5 5 5 5" />
                 </svg>
@@ -755,7 +867,7 @@ export default function DashboardClient() {
         </header>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px",
+        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "18px 12px 14px" : "28px 24px",
           display: "flex", flexDirection: "column", gap: 20 }}>
           {msgs.map(msg => <ChatMessage key={msg.id} msg={msg} />)}
           {chatLoading && msgs[msgs.length - 1]?.role === "user" && (
@@ -771,7 +883,7 @@ export default function DashboardClient() {
 
         {/* Suggested prompts */}
         {msgs.length === 1 && readyDocs.length > 0 && (
-          <div style={{ padding: "0 24px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ padding: isMobile ? "0 12px 14px" : "0 24px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
             {["Summarise this document", "Explain the main concepts simply",
               "What should I know?", "Quiz me on this"].map(prompt => (
               <button key={prompt} className="btn btn-outline"
@@ -784,10 +896,10 @@ export default function DashboardClient() {
         )}
 
         {/* Input */}
-        <div style={{ borderTop: "1px solid var(--border)", padding: "14px 20px", background: "var(--bg-2)" }}>
+        <div style={{ borderTop: "1px solid var(--border)", padding: isMobile ? "12px" : "14px 20px", background: "var(--bg-2)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "flex-end",
             background: "var(--bg-3)", border: "1px solid var(--border-2)",
-            borderRadius: "var(--radius-lg)", padding: "10px 10px 10px 16px" }}>
+            borderRadius: "var(--radius-lg)", padding: isMobile ? "8px 8px 8px 12px" : "10px 10px 10px 16px" }}>
             <input type="file" multiple accept=".pdf,application/pdf"
               style={{ display: "none" }} id="chat-file"
               onChange={e => e.target.files && handleFiles(e.target.files)} />
@@ -806,10 +918,10 @@ export default function DashboardClient() {
               }
               rows={1}
               style={{ flex: 1, background: "none", border: "none", outline: "none",
-                fontFamily: "var(--font-body)", fontSize: "0.9375rem", color: "var(--text)",
-                resize: "none", lineHeight: 1.6, paddingTop: 6, minHeight: 28, maxHeight: 160 }} />
+                fontFamily: "var(--font-chat)", fontSize: "0.975rem", color: "var(--text)",
+                resize: "none", lineHeight: 1.6, minHeight: 28, maxHeight: 160 }} />
             <button onClick={sendMessage} disabled={!input.trim() || chatLoading}
-              style={{ width: 38, height: 38, flexShrink: 0,
+              style={{ width: isMobile ? "5.2vh" : "4.4vh", height: isMobile ? "5.2vh" : "4.4vh", flexShrink: 0,
                 background: input.trim() && !chatLoading ? "var(--accent)" : "var(--bg-4)",
                 border: "none", borderRadius: "var(--radius)",
                 cursor: input.trim() && !chatLoading ? "pointer" : "default",
@@ -830,8 +942,23 @@ export default function DashboardClient() {
 
       {/* ══ RIGHT PANEL ══════════════════════════════════════════════ */}
       {rightOpen && (
-        <aside style={{ width: 320, flexShrink: 0, borderLeft: "1px solid var(--border)",
-          background: "var(--bg-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <aside style={{
+          width: isMobile ? "min(92vw, 360px)" : 320,
+          flexShrink: 0,
+          borderLeft: "1px solid var(--border)",
+          background: "var(--bg-2)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          ...(isMobile
+            ? {
+                position: "fixed",
+                inset: "0 0 0 auto",
+                zIndex: 30,
+                boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+              }
+            : {}),
+        }}>
 
           <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)",
             display: "flex", alignItems: "center", gap: 8 }}>
@@ -867,15 +994,17 @@ export default function DashboardClient() {
             )}
           </div>
 
-          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
-            <div className="dropzone" style={{ padding: "22px 16px" }}
-              onClick={() => fileInputRef.current?.click()}>
-              <p style={{ fontSize: "0.875rem", color: "var(--text-3)", lineHeight: 1.6 }}>
-                <span style={{ color: "var(--accent)", fontWeight: 500 }}>Click</span> or drag & drop
-              </p>
-              <p style={{ fontSize: "0.75rem", color: "var(--text-3)", marginTop: 4 }}>PDF files only</p>
+          {!isMobile && (
+            <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
+              <div className="dropzone" style={{ padding: "22px 16px" }}
+                onClick={() => fileInputRef.current?.click()}>
+                <p style={{ fontSize: "0.875rem", color: "var(--text-3)", lineHeight: 1.6 }}>
+                  <span style={{ color: "var(--accent)", fontWeight: 500 }}>Click</span> or drag & drop
+                </p>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-3)", marginTop: 4 }}>PDF files only</p>
+              </div>
             </div>
-          </div>
+          )}
         </aside>
       )}
     </div>
