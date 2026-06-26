@@ -9,7 +9,7 @@
  * It NEVER trusts the redirect itself as proof of payment.
  */
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import { useAuthUser } from "@/app/hooks/use-auth-user";
@@ -18,6 +18,29 @@ import { pollOrderStatus } from "@/lib/payments";
 type ResultState = "checking" | "paid" | "failed" | "error";
 
 export default function PaymentResultPage() {
+  return (
+    <Suspense fallback={<PaymentResultFallback />}>
+      <PaymentResultContent />
+    </Suspense>
+  );
+}
+
+function PaymentResultFallback() {
+  return (
+    <main style={{
+      minHeight: "100dvh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 20, padding: 24,
+      background: "var(--bg)", textAlign: "center",
+    }}>
+      <span className="spinner" style={{ width: 32, height: 32, color: "var(--accent)" }} />
+      <p className="font-display" style={{ fontSize: "1.5rem", color: "var(--text)", maxWidth: 420 }}>
+        Loading payment result…
+      </p>
+    </main>
+  );
+}
+
+function PaymentResultContent() {
   const params = useSearchParams();
   const router = useRouter();
   const { user, loading: authLoading } = useAuthUser();

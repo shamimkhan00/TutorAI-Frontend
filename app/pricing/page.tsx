@@ -26,7 +26,7 @@ declare global {
 }
 
 const PLANS = [
-  { id: "free",    label: "Free",        price: 0,   credits: "20 messages/day",     cta: "Current plan", purpose: null as const },
+  { id: "free",    label: "Free",        price: 0,   credits: "20 messages/day",     cta: "Current plan", purpose: null },
   { id: "student", label: "Student Pro", price: 199, credits: "500 messages/month",  cta: "Upgrade",       purpose: "subscription" as const },
   { id: "premium", label: "Premium",     price: 499, credits: "2000 messages/month", cta: "Upgrade",       purpose: "subscription" as const },
 ];
