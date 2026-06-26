@@ -897,7 +897,7 @@ export default function DashboardClient() {
 
         {/* Input */}
         <div style={{ borderTop: "1px solid var(--border)", padding: isMobile ? "12px" : "14px 20px", background: "var(--bg-2)" }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end",
+          <div style={{ display: "flex", gap: 10, alignItems: "center",
             background: "var(--bg-3)", border: "1px solid var(--border-2)",
             borderRadius: "var(--radius-lg)", padding: isMobile ? "8px 8px 8px 12px" : "10px 10px 10px 16px" }}>
             <input type="file" multiple accept=".pdf,application/pdf"
